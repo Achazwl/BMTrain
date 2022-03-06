@@ -3,7 +3,7 @@
 #include <ATen/cuda/CUDAContext.h>
 
 namespace {
-// blocks <n // 1024>,      threads<min(n, 1024)>
+// blocks <roundup(n,1024)>,      threads<1024>
 __global__ void adam_fp32_accum(
     int32_t n,
     const half *g,        // (n)

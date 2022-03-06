@@ -27,18 +27,33 @@ def main():
         ext_modules=[
             CUDAExtension('bmtrain.nccl._C', [
                 'csrc/nccl.cpp',
-            ], include_dirs=["csrc/nccl/build/include"], extra_compile_args={}),
-            CUDAExtension('bmtrain.optim._cuda', [
+            ], include_dirs=[
+                "csrc/nccl/build/include"
+            ], extra_compile_args={}),
+            CUDAExtension('bmtrain.optim.adam._cuda', [
                 'csrc/adam_cuda.cpp',
                 'csrc/cuda/adam.cu',
-                'csrc/cuda/has_inf_nan.cu'
             ], extra_compile_args={}),
-            CppExtension("bmtrain.optim._cpu", [
+            CUDAExtension('bmtrain.optim.lamb._cuda', [
+                'csrc/lamb_cuda.cpp',
+                'csrc/cuda/lamb.cu',
+            ], extra_compile_args={}),
+            CUDAExtension('bmtrain.optim._util', [
+                'csrc/utils.cpp',
+                'csrc/cuda/has_inf_nan.cu',
+            ], extra_compile_args={}),
+            CppExtension("bmtrain.optim.adam._cpu", [
                 "csrc/adam_cpu.cpp",
             ], extra_compile_args=[
                 '-fopenmp', 
                 *avx_flag
-            ], extra_link_args=['-lgomp'])
+            ], extra_link_args=['-lgomp']),
+            CppExtension("bmtrain.optim.lamb._cpu", [
+                "csrc/lamb_cpu.cpp",
+            ], extra_compile_args=[
+                '-fopenmp', 
+                *avx_flag
+            ], extra_link_args=['-lgomp']),
         ],
         cmdclass={
             'build_ext': BuildExtension

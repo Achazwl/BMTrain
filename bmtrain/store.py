@@ -107,7 +107,7 @@ class DistributedStateDictWrapper:
     def __getitem__(self, key : str):
         tmp_shape = torch.zeros(32, device="cuda", dtype=torch.int32)
         if config['rank'] == 0:
-            input_param : torch.Tensor = self._state_dict[key]
+            input_param : torch.Tensor = self._state_dict[key] #.clone()
             shape_list = torch.tensor(list(input_param.size()), device="cuda", dtype=torch.int32)
             dtype_idx = DTYPE_LIST.index(input_param.dtype)
             
@@ -131,7 +131,7 @@ class DistributedStateDictWrapper:
         output_param = torch.empty(shape_list, dtype=DTYPE_LIST[dtype_idx], device="cuda")
         
         if config['rank'] == 0:
-            input_param : torch.Tensor = self._state_dict[key]
+            input_param : torch.Tensor = self._state_dict[key].clone()
             input_param = input_param.cuda().contiguous()
 
             nccl.broadcast(

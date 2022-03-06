@@ -1,12 +1,12 @@
 import torch
-from ..global_var import config
-from . import _cpu as C
+from ...global_var import config
 from . import _cuda as G
-from .. import nccl
+from .. import _util as U
+from ... import nccl
 
-class AdamOffloadOptimizer(torch.optim.Optimizer):
+class LambOptimizer(torch.optim.Optimizer):
     """
-    Adam optimizer
+    Lamb optimizer
     """
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, scale=65536, hold_steps=0):
         if not 0.0 <= lr:
@@ -23,6 +23,7 @@ class AdamOffloadOptimizer(torch.optim.Optimizer):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(params, defaults)
 
+        self.load_stream = torch.cuda.Stream()
         self._scale = scale
         self._steps_since_last_scale = 0
         self._hold_steps = hold_steps
@@ -37,7 +38,14 @@ class AdamOffloadOptimizer(torch.optim.Optimizer):
 
     @torch.no_grad()
     def justify_scale(self, scale):
+        delta = scale / self._scale
         self._scale = scale
+        for group in self.param_groups:
+            for p in group['params']:
+                state = self.state[p]
+                if len(state) > 0:
+                    state['exp_avg'] *= delta
+                    state['exp_avg_sq'] *= delta
         self._steps_since_last_scale = 0
 
     @torch.no_grad()
@@ -59,72 +67,52 @@ class AdamOffloadOptimizer(torch.optim.Optimizer):
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is not None:
-                    G.f_has_inf_nan(p.grad, has_inf_or_nan)
+                    U.f_has_inf_nan(p.grad, has_inf_or_nan)
         
         if "comm" in config:
             nccl.allReduce(has_inf_or_nan.storage(), has_inf_or_nan.storage(), "max", config["comm"])
 
         if has_inf_or_nan > 0:
             raise OverflowError("Gradient overflow")
+        
+        self._steps_since_last_scale += 1
 
-        # parameters to be updated
-        update_params = []
-
+        # update parameters
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is not None:
                     if p.grad.is_sparse:
-                        raise RuntimeError('Adam does not support sparse gradients, please consider SparseAdam instead')
+                        raise RuntimeError('Lamb does not support sparse gradients, please consider SparseLamb instead')
 
                     state = self.state[p]
                     # Lazy state initialization
                     if len(state) == 0:
                         state['step'] = 0
                         # Exponential moving average of gradient values
-                        state['exp_avg'] = torch.zeros(p.size(), dtype=torch.float32, device="cpu")         # on host
+                        state['exp_avg'] = torch.zeros(p.size(), dtype=torch.half, device=p.device) # on device
                         # Exponential moving average of squared gradient values
-                        state['exp_avg_sq'] = torch.zeros(p.size(), dtype=torch.float32, device="cpu")      # on host
+                        state['exp_avg_sq'] = torch.zeros(p.size(), dtype=torch.float32, device=p.device)   # on device
 
-                        state['_param_fp32'] = torch.empty(p.size(), dtype=torch.float32, device="cpu")     # on host
-                        state['_param_fp32'].copy_(p)
+                        state['param_fp32'] = torch.empty(p.size(), dtype=torch.float32, device=p.device)   # on device
+                        state['param_fp32'].copy_(p)
 
-                        # placeholder
-                        state["_param_fp16"] = torch.empty(p.size(), dtype=torch.float16, pin_memory=True)  # on host
-                        state["_grad_fp16"] = torch.empty(p.size(), dtype=torch.float16, pin_memory=True)   # on host
-                        state["_load_event"] = torch.cuda.Event()
-                    update_params.append((p, state, group['betas'][0], group['betas'][1], group['eps'], group['lr'], group['weight_decay']))
-
-        # transfer parameters to host asynchronously
-        for param, state, _, _, _, _, _ in update_params:
-            state["_grad_fp16"].copy_(param.grad, non_blocking=True)
-            torch.cuda.current_stream().record_event(state["_load_event"])
+                    # update the steps for each param group update
+                    state['step'] += 1
+                    
+                    G.f_lamb(
+                        state["param_fp32"],    # fp32
+                        p,                      # fp16
+                        p.grad,                 # fp16
+                        state['exp_avg'],       # fp16: m
+                        state["exp_avg_sq"],    # fp32: v
+                        group['betas'][0], group['betas'][1],
+                        group['eps'],
+                        0.0 if state["step"] <= self._hold_steps else group['lr'],
+                        self._scale,
+                        group['weight_decay'],
+                        state['step']
+                    )
         
-        for param, state, beta1, beta2, eps, lr, weight_decay in update_params:
-            # wait for transfer to host
-            state["_load_event"].synchronize()
-            
-            state["step"] += 1
-            
-            # update parameters
-            C.f_adam_cpu(
-                state["_param_fp32"].view(-1),
-                state["_param_fp16"].view(-1),
-                state["_grad_fp16"].view(-1),
-                state["exp_avg"].view(-1),
-                state["exp_avg_sq"].view(-1),
-                beta1, beta2,
-                eps,  0.0 if state["step"] <= self._hold_steps else lr,
-                self._scale,
-                weight_decay,
-                state["step"]
-            )
-            
-
-            # transfer parameters back to device asynchronously
-            param.copy_(state["_param_fp16"], non_blocking=True)
-        
-        self._steps_since_last_scale += 1
-
         return loss
     
     def loss_scale(self, loss : torch.Tensor) -> torch.Tensor:

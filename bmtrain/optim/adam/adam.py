@@ -1,7 +1,8 @@
 import torch
-from ..global_var import config
-from . import _cuda as C
-from .. import nccl
+from ...global_var import config
+from . import _cuda as G
+from .. import _util as U
+from ... import nccl
 
 class AdamOptimizer(torch.optim.Optimizer):
     """
@@ -66,7 +67,7 @@ class AdamOptimizer(torch.optim.Optimizer):
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is not None:
-                    C.f_has_inf_nan(p.grad, has_inf_or_nan)
+                    U.f_has_inf_nan(p.grad, has_inf_or_nan)
         
         if "comm" in config:
             nccl.allReduce(has_inf_or_nan.storage(), has_inf_or_nan.storage(), "max", config["comm"])
@@ -98,7 +99,7 @@ class AdamOptimizer(torch.optim.Optimizer):
                     # update the steps for each param group update
                     state['step'] += 1
                     
-                    C.f_adam(
+                    G.f_adam(
                         state["param_fp32"],    # fp32
                         p,                      # fp16
                         p.grad,                 # fp16

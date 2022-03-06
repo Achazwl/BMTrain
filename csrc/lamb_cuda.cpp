@@ -1,13 +1,13 @@
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
 
-void adam_launcher(const torch::Tensor &param_fp32, const torch::Tensor &param_fp16, const torch::Tensor &g_fp16, const torch::Tensor &m_fp16, const torch::Tensor &v_fp32, float beta1, float beta2, float eps, float lr, float scale, float weight_decay, float bias_correction1, float bias_correction2);
+void lamb_launcher(const torch::Tensor &param_fp32, const torch::Tensor &param_fp16, const torch::Tensor &g_fp16, const torch::Tensor &m_fp16, const torch::Tensor &v_fp32, float beta1, float beta2, float eps, float lr, float scale, float weight_decay, float bias_correction1, float bias_correction2, torch::Tensor &tmp_numer, torch::Tensor &tmp_denom);
 
 #define CHECK_CUDA(x) AT_ASSERTM(x.is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) AT_ASSERTM(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 
-void F_adam(
+void F_lamb(
     const torch::Tensor &param_fp32, 
     const torch::Tensor &param_fp16, 
     const torch::Tensor &g_fp16, 
@@ -42,9 +42,12 @@ void F_adam(
     float bias_correction1 = 1 - powf(beta1, step);
     float bias_correction2 = 1 - powf(beta2, step);
 
-    adam_launcher(param_fp32, param_fp16, g_fp16, m_fp16, v_fp32, beta1, beta2, eps, lr, scale, weight_decay, bias_correction1, bias_correction2);
+    torch::Tensor tmp_numer = param_fp32.new_zeros({1024});
+    torch::Tensor tmp_denom = param_fp32.new_zeros({1024});
+
+    lamb_launcher(param_fp32, param_fp16, g_fp16, m_fp16, v_fp32, beta1, beta2, eps, lr, scale, weight_decay, bias_correction1, bias_correction2, tmp_numer, tmp_denom);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("f_adam", &F_adam, "adam function");
+    m.def("f_lamb", &F_lamb, "lamb function");
 }
