@@ -1,12 +1,14 @@
 import torch
 from ..global_var import config
-from . import adam_cpu as C
-from . import adam_cuda as G
+from . import lamb_cpu as C
+from . import adam_cpu as C_adam
+from . import lamb_cuda as G
+from . import adam_cuda as G_adam
 from .. import nccl
 
-class AdamOffloadOptimizer(torch.optim.Optimizer):
+class LambOffloadOptimizer(torch.optim.Optimizer):
     """
-    Adam Offload optimizer
+    Lamb offload optimizer
     """
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, scale=65536, hold_steps=0):
         if not 0.0 <= lr:
@@ -59,7 +61,7 @@ class AdamOffloadOptimizer(torch.optim.Optimizer):
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is not None:
-                    G.f_has_inf_nan(p.grad, has_inf_or_nan)
+                    G_adam.f_has_inf_nan(p.grad, has_inf_or_nan)
         
         if "comm" in config:
             nccl.allReduce(has_inf_or_nan.storage(), has_inf_or_nan.storage(), "max", config["comm"])
@@ -72,9 +74,9 @@ class AdamOffloadOptimizer(torch.optim.Optimizer):
 
         for group in self.param_groups:
             for p in group['params']:
-                if p.grad is not None and p.requires_grad:
+                if p.grad is not None:
                     if p.grad.is_sparse:
-                        raise RuntimeError('Adam does not support sparse gradients, please consider SparseAdam instead')
+                        raise RuntimeError('Lamb does not support sparse gradients, please consider SparseLamb instead')
 
                     state = self.state[p]
                     # Lazy state initialization
@@ -106,20 +108,45 @@ class AdamOffloadOptimizer(torch.optim.Optimizer):
             state["step"] += 1
             
             # update parameters
-            C.f_adam_cpu(
+            numer = torch.empty(1, dtype=torch.float32, device="cpu")
+            denom = torch.empty(1, dtype=torch.float32, device="cpu")
+            _lr = 0.0 if state["step"] <= self._hold_steps else lr
+            C.f_lamb_prepare_cpu(
                 state["_param_fp32"].view(-1),
                 state["_param_fp16"].view(-1),
                 state["_grad_fp16"].view(-1),
                 state["exp_avg"].view(-1),
                 state["exp_avg_sq"].view(-1),
                 beta1, beta2,
-                eps,  0.0 if state["step"] <= self._hold_steps else lr,
+                eps, _lr,
+                self._scale,
+                weight_decay,
+                state["step"],
+                numer, denom
+            )
+
+            numer = numer.to(param.device)
+            denom = denom.to(param.device)
+            nccl.allReduce(numer.storage(), numer.storage(), "sum", config["comm"])
+            nccl.allReduce(denom.storage(), denom.storage(), "sum", config["comm"])
+            numer = numer.to("cpu")
+            denom = denom.to("cpu")
+            _lr = _lr * (numer[0]/(denom[0]+1e-10))**0.5
+
+            C_adam.f_adam_cpu(
+                state["_param_fp32"].view(-1),
+                state["_param_fp16"].view(-1),
+                state["_grad_fp16"].view(-1),
+                state["exp_avg"].view(-1),
+                state["exp_avg_sq"].view(-1),
+                beta1, beta2,
+                eps, _lr,
                 self._scale,
                 weight_decay,
                 state["step"]
             )
-            
 
+            
             # transfer parameters back to device asynchronously
             param.copy_(state["_param_fp16"], non_blocking=True)
         

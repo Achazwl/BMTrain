@@ -1,11 +1,12 @@
 import torch
 from ..global_var import config
-from . import adam_cuda as G
+from . import lamb_cuda as G
+from . import adam_cuda as G_adam
 from .. import nccl
 
-class AdamOptimizer(torch.optim.Optimizer):
+class LambOptimizer(torch.optim.Optimizer):
     """
-    Adam optimizer
+    Lamb optimizer
     """
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, scale=65536, hold_steps=0):
         if not 0.0 <= lr:
@@ -66,7 +67,7 @@ class AdamOptimizer(torch.optim.Optimizer):
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is not None:
-                    G.f_has_inf_nan(p.grad, has_inf_or_nan)
+                    G_adam.f_has_inf_nan(p.grad, has_inf_or_nan)
         
         if "comm" in config:
             nccl.allReduce(has_inf_or_nan.storage(), has_inf_or_nan.storage(), "max", config["comm"])
@@ -79,9 +80,9 @@ class AdamOptimizer(torch.optim.Optimizer):
         # update parameters
         for group in self.param_groups:
             for p in group['params']:
-                if p.grad is not None and p.requires_grad:
+                if p.grad is not None:
                     if p.grad.is_sparse:
-                        raise RuntimeError('Adam does not support sparse gradients, please consider SparseAdam instead')
+                        raise RuntimeError('Lamb does not support sparse gradients, please consider SparseLamb instead')
 
                     state = self.state[p]
                     # Lazy state initialization
@@ -98,7 +99,10 @@ class AdamOptimizer(torch.optim.Optimizer):
                     # update the steps for each param group update
                     state['step'] += 1
                     
-                    G.f_adam(
+                    numer = torch.empty(1, dtype=torch.float32, device=p.device)
+                    denom = torch.empty(1, dtype=torch.float32, device=p.device)
+                    _lr = 0.0 if state["step"] <= self._hold_steps else group['lr']
+                    G.f_lamb_prepare(
                         state["param_fp32"],    # fp32
                         p,                      # fp16
                         p.grad,                 # fp16
@@ -106,7 +110,26 @@ class AdamOptimizer(torch.optim.Optimizer):
                         state["exp_avg_sq"],    # fp32: v
                         group['betas'][0], group['betas'][1],
                         group['eps'],
-                        0.0 if state["step"] <= self._hold_steps else group['lr'],
+                        _lr,
+                        self._scale,
+                        group['weight_decay'],
+                        state['step'],
+                        numer, denom
+                    )
+
+                    nccl.allReduce(numer.storage(), numer.storage(), "sum", config["comm"])
+                    nccl.allReduce(denom.storage(), denom.storage(), "sum", config["comm"])
+                    _lr = _lr * (numer[0]/(denom[0]+1e-10))**0.5
+
+                    G_adam.f_adam(
+                        state["param_fp32"],    # fp32
+                        p,                      # fp16
+                        p.grad,                 # fp16
+                        state['exp_avg'],       # fp16: m
+                        state["exp_avg_sq"],    # fp32: v
+                        group['betas'][0], group['betas'][1],
+                        group['eps'],
+                        _lr,
                         self._scale,
                         group['weight_decay'],
                         state['step']
