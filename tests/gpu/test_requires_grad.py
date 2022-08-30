@@ -40,19 +40,20 @@ def run(m, a, b):
     print(a.weight.grad is None)
     print(a.bias.grad is None)
 
-bmt.init_distributed()
-a = Linear(256, 256)
-b = Linear(256, 256)
-m = TransformerBlockList([CheckpointBlock(a), CheckpointBlock(b)])
-bmt.init_parameters(m)
+if __name__ == "__main__":
+    bmt.init_distributed()
+    a = Linear(256, 256)
+    b = Linear(256, 256)
+    m = TransformerBlockList([CheckpointBlock(a), CheckpointBlock(b)])
+    bmt.init_parameters(m)
 
-a.bias.requires_grad_(False)
-run(m, a, b)
+    a.bias.requires_grad_(False)
+    run(m, a, b)
 
-a.weight.requires_grad_(False)
-a.bias.requires_grad_(True)
-run(m, a, b)
+    a.weight.requires_grad_(False)
+    a.bias.requires_grad_(True)
+    run(m, a, b)
 
-a.weight.requires_grad_(True)
-a.bias.requires_grad_(False)
-run(m, a, b)
+    a.weight.requires_grad_(True)
+    a.bias.requires_grad_(False)
+    run(m, a, b)

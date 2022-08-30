@@ -1,7 +1,7 @@
 import bmtrain as bmt
 import torch
 
-def main():
+def test_main():
     bmt.init_distributed()
     x = torch.full((1,), bmt.rank() + 1, dtype=torch.half, device="cuda").requires_grad_(True)
     y = bmt.distributed.all_reduce(x, "prod").view(-1)
@@ -12,4 +12,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    test_main()

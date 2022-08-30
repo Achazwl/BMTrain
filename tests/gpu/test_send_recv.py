@@ -5,6 +5,7 @@ from bmtrain.pipe_comm import send_activations, recv_activations, gather_input
 from bmtrain import nccl
 from torch.distributed.distributed_c10d import recv
 from time import sleep
+
 def test_send_tensor():
     bmt.init_distributed()
     current_stream = torch.cuda.current_stream()

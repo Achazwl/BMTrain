@@ -24,7 +24,7 @@ class OutterModule(bmt.DistributedModule):
         bmt.print_rank(self.training)
         return self.blk(x)
 
-def main():
+def test_main():
     bmt.init_distributed()
 
     model = OutterModule()
@@ -34,4 +34,4 @@ def main():
     bmt.print_rank(y)
 
 if __name__ == "__main__":
-    main()
+    test_main()

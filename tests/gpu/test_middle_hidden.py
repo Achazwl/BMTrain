@@ -115,7 +115,7 @@ def manual_seed(seed=33):
     except ModuleNotFoundError:
         pass
 
-def sub_test(name, cls, num_layer, dim, batch, seq_len, only_last=False, only_middle=False, mix_test=False):
+def run(name, cls, num_layer, dim, batch, seq_len, only_last=False, only_middle=False, mix_test=False):
     manual_seed()
 
     pre = Linear(dim, dim)
@@ -172,17 +172,18 @@ def sub_test(name, cls, num_layer, dim, batch, seq_len, only_last=False, only_mi
             )
         )
 
-def test(name, cls, num_layer=4, dim=4096, batch=32, seq_len=256):
-    sub_test(name, cls, num_layer=num_layer, dim=dim, batch=batch, seq_len=seq_len, only_last=True)
+def test_all(name, cls, num_layer=4, dim=4096, batch=32, seq_len=256):
+    run(name, cls, num_layer=num_layer, dim=dim, batch=batch, seq_len=seq_len, only_last=True)
     bmt.synchronize()
-    sub_test(name, cls, num_layer=num_layer, dim=dim, batch=batch, seq_len=seq_len, only_middle=True)
+    run(name, cls, num_layer=num_layer, dim=dim, batch=batch, seq_len=seq_len, only_middle=True)
     bmt.synchronize()
-    sub_test(name, cls, num_layer=num_layer, dim=dim, batch=batch, seq_len=seq_len, mix_test=True)
+    run(name, cls, num_layer=num_layer, dim=dim, batch=batch, seq_len=seq_len, mix_test=True)
     bmt.synchronize()
 
-bmt.init_distributed(pipe_size=4)
+if __name__ == "__main__":
+    bmt.init_distributed(pipe_size=4)
 
-test("normal", Model_NORMAL)
-test("block", Model_BLOCK)
-test("zero", Model_ZERO)
-test("pipe", Model_PIPE)
+    test_all("normal", Model_NORMAL)
+    test_all("block", Model_BLOCK)
+    test_all("zero", Model_ZERO)
+    test_all("pipe", Model_PIPE)

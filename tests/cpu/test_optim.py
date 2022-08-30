@@ -1,9 +1,9 @@
 import torch
 import bmtrain as bmt
 
-class TestModule(torch.nn.Module):
+class Module(torch.nn.Module):
     def __init__(self):
-        super(TestModule, self).__init__()
+        super(Module, self).__init__()
         self.fc1 = torch.nn.Linear(128, 128)
         self.fc2 = torch.nn.Linear(128, 128)
         self.fc3 = torch.nn.Linear(128, 128)
@@ -11,11 +11,11 @@ class TestModule(torch.nn.Module):
         self.fc5 = torch.nn.Linear(128, 128)
         self.param = torch.nn.Parameter(torch.empty(1237))
 
-def main():
+def test_main():
     # FIXME: this test script is not working
-    model1 = TestModule()
-    model2 = TestModule()
-    model3 = TestModule()
+    model1 = Module()
+    model2 = Module()
+    model3 = Module()
 
     state_dict = model1.state_dict()
     for kw in state_dict.keys():
@@ -55,4 +55,4 @@ def main():
             print(diff1, diff2, diff3)
 
 if __name__ == "__main__":
-    main()
+    test_main()

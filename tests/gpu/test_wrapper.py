@@ -169,7 +169,7 @@ class GPT(torch.nn.Module):
 
         return logits
 
-def main():
+def test_main():
     bmt.init_distributed(
         seed=0,
     )
@@ -290,4 +290,4 @@ def main():
     bmt.save(model, "checkpoint.pt")
 
 if __name__ == '__main__':
-    main()
+    test_main()
